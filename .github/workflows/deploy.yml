@@ -7,41 +7,44 @@ on:
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
-
         with:
-
           host: ${{ secrets.EC2_HOST }}
-
           username: ${{ secrets.EC2_USER }}
-
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-
           script: |
+            sudo su - root << 'EOF'
+
+            echo "===== CURRENT USER ====="
+            whoami
 
             cd /var/www/nodeapp
 
-            echo "Pull Latest Code"
+            echo "===== CURRENT DIRECTORY ====="
+            pwd
 
+            echo "===== GIT PULL ====="
             git pull origin main
 
-            echo "Installing Packages"
-
+            echo "===== INSTALL PACKAGES ====="
             npm install
 
-            echo "Restart PM2"
-
+            echo "===== RESTART PM2 ====="
             pm2 restart app
 
+            echo "===== SAVE PM2 ====="
             pm2 save
 
-            echo "Deployment Completed"
+            echo "===== PM2 STATUS ====="
+            pm2 list
+
+            echo "===== DEPLOYMENT COMPLETED ====="
+
+            EOF
