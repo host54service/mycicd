@@ -13,6 +13,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify AWS Login
+        run: |
+          aws sts get-caller-identity
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -39,11 +50,14 @@ jobs:
               echo "===== AFTER PULL ====="
               git log --oneline -1
 
+              echo "===== INSTALL PACKAGES ====="
               npm install
 
+              echo "===== RESTART PM2 ====="
               pm2 restart app
               pm2 save
 
+              echo "===== PM2 STATUS ====="
               pm2 list
 
               echo "===== DEPLOYMENT COMPLETED ====="
