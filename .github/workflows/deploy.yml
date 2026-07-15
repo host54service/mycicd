@@ -9,7 +9,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      INSTANCE_ID: i-0d4d7f9f4d3a77baa
+      LAUNCH_TEMPLATE: my-temo2
+      AUTO_SCALING_GROUP: my-auto
+
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -21,44 +27,72 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Verify AWS Login
-        run: |
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
 
-      - name: Deploy to EC2
+      - name: Deploy Latest Code
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            sudo bash -c '
-              set -e
+            cd /home/ubuntu/nodeapp
 
-              echo "===== CURRENT USER ====="
-              whoami
+            git pull origin main
 
-              cd /var/www/nodeapp
+            npm install
 
-              echo "===== CURRENT DIRECTORY ====="
-              pwd
+            pm2 restart app
 
-              echo "===== BEFORE PULL ====="
-              git log --oneline -1
+            pm2 save
 
-              git pull origin main
+      - name: Create AMI
+        run: |
+          IMAGE_ID=$(aws ec2 create-image \
+            --instance-id $INSTANCE_ID \
+            --name "nodeapp-${{ github.run_number }}" \
+            --description "GitHub Actions Deployment" \
+            --no-reboot \
+            --query 'ImageId' \
+            --output text)
 
-              echo "===== AFTER PULL ====="
-              git log --oneline -1
+          echo "IMAGE_ID=$IMAGE_ID" >> $GITHUB_ENV
 
-              echo "===== INSTALL PACKAGES ====="
-              npm install
+      - name: Wait For AMI
+        run: |
+          aws ec2 wait image-available \
+            --image-ids $IMAGE_ID
 
-              echo "===== RESTART PM2 ====="
-              pm2 restart app
-              pm2 save
+      - name: Create Launch Template Version
+        run: |
+          aws ec2 create-launch-template-version \
+            --launch-template-name $LAUNCH_TEMPLATE \
+            --source-version '$Latest' \
+            --version-description "GitHub-${{ github.run_number }}" \
+            --launch-template-data "{\"ImageId\":\"$IMAGE_ID\"}"
 
-              echo "===== PM2 STATUS ====="
-              pm2 list
+      - name: Get Latest Launch Template Version
+        run: |
+          VERSION=$(aws ec2 describe-launch-templates \
+            --launch-template-names $LAUNCH_TEMPLATE \
+            --query 'LaunchTemplates[0].LatestVersionNumber' \
+            --output text)
 
-              echo "===== DEPLOYMENT COMPLETED ====="
-            '
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Set Default Launch Template Version
+        run: |
+          aws ec2 modify-launch-template \
+            --launch-template-name $LAUNCH_TEMPLATE \
+            --default-version $VERSION
+
+      - name: Update Auto Scaling Group
+        run: |
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name $AUTO_SCALING_GROUP \
+            --launch-template LaunchTemplateName=$LAUNCH_TEMPLATE,Version='$Default'
+
+      - name: Start Instance Refresh
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $AUTO_SCALING_GROUP
